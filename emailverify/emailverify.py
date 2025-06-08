@@ -4,7 +4,7 @@ import smtplib
 import ssl
 import os
 import aiosqlite
-from redbot.core import commands
+from redbot.core import commands, Config
 from redbot.core.bot import Red
 from discord.ui import Button, View, Modal, TextInput
 
@@ -13,6 +13,13 @@ DB_PATH = "data/emailverify/emailverify.sqlite"
 class EmailVerify(commands.Cog):
     def __init__(self, bot: Red):
         self.bot = bot
+        self.config = Config.get_conf(self, identifier=98437829)
+        default_global = {
+            "smtp_server": "",
+            "smtp_email": "",
+            "smtp_password": "",
+        }
+        self.config.register_global(**default_global)
         self.bot.loop.create_task(self.initialize_db())
 
     async def initialize_db(self):
@@ -67,7 +74,7 @@ class EmailVerify(commands.Cog):
                             )
                             await db.commit()
 
-                        send_email(email, code)
+                        await self.send_email(interaction, email, code)
 
                         class CodeModal(Modal, title="Enter Verification Code"):
                             code_input = TextInput(label="Code", placeholder="123456", required=True)
@@ -103,6 +110,8 @@ class EmailVerify(commands.Cog):
                 await interaction.response.send_modal(EmailModal())
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 try:
                     await interaction.response.send_message(f"❌ Something went wrong: `{e}`", ephemeral=True)
                 except:
@@ -134,6 +143,14 @@ class EmailVerify(commands.Cog):
                              (str(role.id),))
             await db.commit()
         await ctx.send(f"✅ Verified role set to: {role.name}")
+
+    @verifyadmin.command()
+    async def setemailconfig(self, ctx, smtp_server: str, email: str, password: str):
+        """Set SMTP credentials for email sending."""
+        await self.config.smtp_server.set(smtp_server)
+        await self.config.smtp_email.set(email)
+        await self.config.smtp_password.set(password)
+        await ctx.send("✅ SMTP configuration set.")
 
     @verifyadmin.command()
     async def view(self, ctx):
@@ -171,6 +188,28 @@ class EmailVerify(commands.Cog):
             await db.commit()
         await ctx.send(f"✅ Unblacklisted `{entry}`.")
 
+    async def send_email(self, interaction, recipient_email, code):
+        smtp_server = await self.config.smtp_server()
+        sender_email = await self.config.smtp_email()
+        password = await self.config.smtp_password()
+
+        if not smtp_server or not sender_email or not password:
+            await interaction.response.send_message("❌ Email configuration is not set. Please contact an admin.", ephemeral=True)
+            return
+
+        port = 465
+        message = f"Subject: Your Verification Code\n\nYour code is: {code}"
+
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
+                server.login(sender_email, password)
+                server.sendmail(sender_email, recipient_email, message)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Failed to send email: `{e}`", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_member_remove(self, member):
         async with aiosqlite.connect(DB_PATH) as db:
@@ -183,17 +222,6 @@ class EmailVerify(commands.Cog):
             await db.execute("DELETE FROM verifications WHERE user_id = ?", (user.id,))
             await db.commit()
 
-def send_email(recipient_email, code):
-    port = 465
-    smtp_server = "smtp.zoho.com"
-    sender_email = "kcgaming@lifesteal.team"
-    password = "KCssgXDrTJSJ"
-    message = f"Subject: Your Verification Code\n\nYour code is: {code}"
-
-    context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
-        server.login(sender_email, password)
-        server.sendmail(sender_email, recipient_email, message)
-
 async def setup(bot: Red):
     await bot.add_cog(EmailVerify(bot))
+    
