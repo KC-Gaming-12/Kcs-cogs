@@ -185,8 +185,8 @@ class EmailVerify(commands.Cog):
 
 def send_email(recipient_email, code):
     port = 465
-    smtp_server = "smtp.example.com"
-    sender_email = "yourbot@example.com"
+    smtp_server = "smtp.zoho.com"
+    sender_email = "kcgaming@lifesteal.team"
     password = "yourEmailPassword"
     message = f"Subject: Your Verification Code\n\nYour code is: {code}"
 
