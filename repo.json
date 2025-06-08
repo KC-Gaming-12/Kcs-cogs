@@ -1,0 +1,10 @@
+{
+  "emailverify": {
+    "install_msg": "Thanks for installing the EmailVerify cog!",
+    "author": ["KC Gaming 12", "ChatGPT"],
+    "short": "Email verification with mod tools",
+    "description": "Verify users via email. Auto assign roles. Admin tools included.",
+    "requirements": ["aiosqlite"],
+    "tags": ["email", "verify", "moderation"]
+  }
+}
