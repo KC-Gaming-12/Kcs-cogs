@@ -73,7 +73,8 @@ class EmailVerify(commands.Cog):
                                 (interaction.user.id, email, code)
                             )
                             await db.commit()
-
+                            
+                        await interaction.response.defer(ephemeral=True, thinking=True)
                         await self.send_email(interaction, email, code)
 
                         class CodeModal(Modal, title="Enter Verification Code"):
