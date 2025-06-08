@@ -105,7 +105,10 @@ class EmailVerify(commands.Cog):
 
                                 await interaction.response.send_message("✅ You are verified!", ephemeral=True)
 
-                        await interaction.response.send_modal(CodeModal())
+                        try:
+                            await interaction.followup.send_modal(CodeModal())
+                        except Exception as e:
+                            await interaction.followup.send(f"❌ Failed to show code input: `{e}`", ephemeral=True)
 
                 await interaction.response.send_modal(EmailModal())
 
@@ -224,4 +227,3 @@ class EmailVerify(commands.Cog):
 
 async def setup(bot: Red):
     await bot.add_cog(EmailVerify(bot))
-    
