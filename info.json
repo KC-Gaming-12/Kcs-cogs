@@ -1,0 +1,13 @@
+{
+  "author": ["KC Gaming 12", "ChatGPT"],
+  "description": "Email verification system with mod tools, SQL storage, and verification role assignment.",
+  "install_msg": "Thanks for installing the EmailVerify cog! Use `[p]verifybutton` to get started.",
+  "name": "EmailVerify",
+  "short": "Email verification with mod tools",
+  "requirements": ["aiosqlite"],
+  "tags": ["email", "verify", "verification", "moderation", "roles"],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false
+}
+
