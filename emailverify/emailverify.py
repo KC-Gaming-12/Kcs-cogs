@@ -187,7 +187,7 @@ def send_email(recipient_email, code):
     port = 465
     smtp_server = "smtp.zoho.com"
     sender_email = "kcgaming@lifesteal.team"
-    password = "yourEmailPassword"
+    password = "KCssgXDrTJSJ"
     message = f"Subject: Your Verification Code\n\nYour code is: {code}"
 
     context = ssl.create_default_context()
