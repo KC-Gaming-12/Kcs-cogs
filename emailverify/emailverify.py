@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from redbot.core import Config, commands as red_commands
+from redbot.core import Config, commands
 import random
 import string
 import aiosqlite
@@ -31,14 +31,14 @@ class EmailVerify(commands.Cog):
             """)
             await db.commit()
 
-    @red_commands.command()
-    @red_commands.admin()
+    @commands.command()
+    @commands.admin()
     async def setverifiedrole(self, ctx, role: discord.Role):
         await self.config.verified_role_id.set(role.id)
         await ctx.send(f"✅ Verified role set to: {role.name}")
 
-    @red_commands.command()
-    @red_commands.admin()
+    @commands.command()
+    @commands.admin()
     async def blacklistemail(self, ctx, email: str):
         bl = await self.config.blacklist()
         if email not in bl:
@@ -46,8 +46,8 @@ class EmailVerify(commands.Cog):
             await self.config.blacklist.set(bl)
             await ctx.send(f"🚫 Blacklisted `{email}`")
 
-    @red_commands.command()
-    @red_commands.admin()
+    @commands.command()
+    @commands.admin()
     async def viewpending(self, ctx):
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute("SELECT user_id, email FROM verifications WHERE verified = 0") as cursor:
@@ -58,7 +58,7 @@ class EmailVerify(commands.Cog):
         msg = "\n".join([f"<@{uid}>: {email}" for uid, email in rows])
         await ctx.send(f"**Pending Verifications:**\n{msg}")
 
-    @red_commands.command()
+    @commands.command()
     async def verifysetup(self, ctx):
         embed = discord.Embed(
             title="Email Verification",
