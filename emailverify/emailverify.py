@@ -67,6 +67,38 @@ class EmailVerify(commands.Cog):
         )
         await ctx.send(embed=embed, view=VerifyView(self))
 
+    @commands.command()
+    @commands.admin()
+    async def removeuser(self, ctx, user: discord.User):
+        await self.unverify_user(user.id)
+        await ctx.send(f"❌ Removed verification for {user.mention}.")
+
+    @commands.command()
+    @commands.admin()
+    async def resendcode(self, ctx, user: discord.User):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT email FROM verifications WHERE user_id = ?", (user.id,)) as cursor:
+                row = await cursor.fetchone()
+            if not row:
+                await ctx.send("User not pending verification.")
+                return
+            code = ''.join(random.choices(string.digits, k=6))
+            await db.execute("UPDATE verifications SET code = ? WHERE user_id = ?", (code, user.id))
+            await db.commit()
+        await self.send_verification_email(row[0], code)
+        await ctx.send(f"🔁 Resent code to {row[0]}")
+
+    @commands.command()
+    @commands.admin()
+    async def forceverify(self, ctx, user: discord.Member):
+        await self.config.user(user).verified.set(True)
+        role_id = await self.config.verified_role_id()
+        if role_id:
+            role = ctx.guild.get_role(role_id)
+            if role:
+                await user.add_roles(role, reason="Force-verified by admin")
+        await ctx.send(f"✅ Force-verified {user.mention}.")
+
     async def send_verification_email(self, email, code):
         msg = EmailMessage()
         msg.set_content(f"Your verification code is: {code}")
