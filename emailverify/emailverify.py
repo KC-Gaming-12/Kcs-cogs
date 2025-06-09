@@ -32,6 +32,15 @@ class EmailVerify(commands.Cog):
             await db.commit()
 
     @commands.command()
+    async def verifybutton(self, ctx):
+        embed = discord.Embed(
+            title="Email Verification",
+            description="Click the button below to begin verifying your email address!",
+            color=discord.Color.cyan()
+        )
+        await ctx.send(embed=embed, view=VerifyView(self))
+
+    @commands.command()
     @commands.admin()
     async def setverifiedrole(self, ctx, role: discord.Role):
         await self.config.verified_role_id.set(role.id)
@@ -57,15 +66,6 @@ class EmailVerify(commands.Cog):
             return
         msg = "\n".join([f"<@{uid}>: {email}" for uid, email in rows])
         await ctx.send(f"**Pending Verifications:**\n{msg}")
-
-    @commands.command()
-    async def verifysetup(self, ctx):
-        embed = discord.Embed(
-            title="Email Verification",
-            description="Click the button below to start the verification process!",
-            color=discord.Color.cyan()
-        )
-        await ctx.send(embed=embed, view=VerifyView(self))
 
     @commands.command()
     @commands.admin()
@@ -205,3 +205,4 @@ class CodeEntryModal(discord.ui.Modal, title="Enter Verification Code"):
 
 async def setup(bot):
     await bot.add_cog(EmailVerify(bot))
+        
