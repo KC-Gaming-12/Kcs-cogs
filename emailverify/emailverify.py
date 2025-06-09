@@ -8,16 +8,26 @@ import asyncio
 import smtplib
 from email.message import EmailMessage
 
+
 class EmailVerify(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=9876543210, force_registration=True)
-        default_global = {"blacklist": [], "verified_role_id": None}
+        default_global = {
+            "blacklist": [],
+            "verified_role_id": None,
+            "smtp_server": None,
+            "smtp_port": 587,
+            "email_address": None,
+            "email_password": None
+        }
         default_user = {"email": None, "verified": False}
         self.config.register_global(**default_global)
         self.config.register_user(**default_user)
         self.db_path = "emailverify.sqlite3"
         self.bot.loop.create_task(self.initialize_db())
+
+        self.bot.add_view(VerifyView(self))
 
     async def initialize_db(self):
         async with aiosqlite.connect(self.db_path) as db:
@@ -33,12 +43,41 @@ class EmailVerify(commands.Cog):
 
     @commands.command()
     async def verifybutton(self, ctx):
-        embed = discord.Embed(
-            title="Email Verification",
-            description="Click the button below to begin verifying your email address!",
-            color=discord.Color.cyan()
-        )
-        await ctx.send(embed=embed, view=VerifyView(self))
+        """Send the verification embed with button."""
+        try:
+            embed = discord.Embed(
+                title="Email Verification",
+                description="Click the button below to begin verifying your email address!",
+                color=discord.Color.cyan()
+            )
+            await ctx.send(embed=embed, view=VerifyView(self))
+        except Exception as e:
+            await ctx.send(f"❌ Error sending button: `{e}`")
+
+    @commands.command()
+    @commands.admin()
+    async def setemailsmtp(self, ctx, server: str, port: int):
+        """Set the SMTP server and port."""
+        await self.config.smtp_server.set(server)
+        await self.config.smtp_port.set(port)
+        await ctx.send(f"📬 SMTP server set to `{server}:{port}`.")
+
+    @commands.command()
+    @commands.admin()
+    async def setemailcreds(self, ctx, address: str, password: str):
+        """Set the bot's email address and password."""
+        await self.config.email_address.set(address)
+        await self.config.email_password.set(password)
+        await ctx.send("🔐 Email credentials saved.")
+
+    @commands.command()
+    @commands.admin()
+    async def showemailconfig(self, ctx):
+        """View current email configuration (excluding password)."""
+        server = await self.config.smtp_server()
+        port = await self.config.smtp_port()
+        address = await self.config.email_address()
+        await ctx.send(f"**Email Config:**\n📬 SMTP: `{server}:{port}`\n📧 Address: `{address}`")
 
     @commands.command()
     @commands.admin()
@@ -100,23 +139,27 @@ class EmailVerify(commands.Cog):
         await ctx.send(f"✅ Force-verified {user.mention}.")
 
     async def send_verification_email(self, email, code):
+        server = await self.config.smtp_server()
+        port = await self.config.smtp_port()
+        username = await self.config.email_address()
+        password = await self.config.email_password()
+
+        if not all([server, port, username, password]):
+            print("Missing email configuration")
+            return False
+
         msg = EmailMessage()
         msg.set_content(f"Your verification code is: {code}")
         msg["Subject"] = "Your Verification Code"
-        msg["From"] = "yourbot@yourdomain.com"
+        msg["From"] = username
         msg["To"] = email
 
-        smtp_server = "smtp.zoho.com"
-        smtp_port = 587
-        smtp_username = "yourbot@yourdomain.com"
-        smtp_password = "yourpassword"
-
         try:
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()
-            server.login(smtp_username, smtp_password)
-            server.send_message(msg)
-            server.quit()
+            smtp = smtplib.SMTP(server, port)
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(msg)
+            smtp.quit()
             return True
         except Exception as e:
             print(f"Email sending failed: {e}")
@@ -140,6 +183,7 @@ class EmailVerify(commands.Cog):
     async def on_member_kick(self, member):
         await self.unverify_user(member.id)
 
+
 class VerifyView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
@@ -148,6 +192,7 @@ class VerifyView(discord.ui.View):
     @discord.ui.button(label="Verify", style=discord.ButtonStyle.blurple, custom_id="start_verify")
     async def start_verify(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmailModal(self.cog))
+
 
 class EmailModal(discord.ui.Modal, title="Enter your Email"):
     email = discord.ui.TextInput(label="Email", style=discord.TextStyle.short, required=True)
@@ -175,7 +220,8 @@ class EmailModal(discord.ui.Modal, title="Enter your Email"):
                 await db.commit()
             await interaction.followup.send_modal(CodeEntryModal(self.cog, interaction.user.id))
         else:
-            await interaction.followup.send("❌ Something went wrong sending the email. Please try again later.", ephemeral=True)
+            await interaction.followup.send("❌ Failed to send email. Ask an admin to check email config.", ephemeral=True)
+
 
 class CodeEntryModal(discord.ui.Modal, title="Enter Verification Code"):
     code = discord.ui.TextInput(label="Code", style=discord.TextStyle.short, required=True)
@@ -203,6 +249,6 @@ class CodeEntryModal(discord.ui.Modal, title="Enter Verification Code"):
                 else:
                     await interaction.response.send_message("❌ Invalid code. Please try again.", ephemeral=True)
 
+
 async def setup(bot):
     await bot.add_cog(EmailVerify(bot))
-        
