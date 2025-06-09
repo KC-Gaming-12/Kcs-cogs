@@ -1,230 +1,175 @@
 import discord
+from discord.ext import commands
+from redbot.core import Config, commands as red_commands
 import random
-import smtplib
-import ssl
-import os
+import string
 import aiosqlite
-from redbot.core import commands, Config
-from redbot.core.bot import Red
-from discord.ui import Button, View, Modal, TextInput
-
-DB_PATH = "data/emailverify/emailverify.sqlite"
+import asyncio
+import smtplib
+from email.message import EmailMessage
 
 class EmailVerify(commands.Cog):
-    def __init__(self, bot: Red):
+    def __init__(self, bot):
         self.bot = bot
-        self.config = Config.get_conf(self, identifier=98437829)
-        default_global = {
-            "smtp_server": "",
-            "smtp_email": "",
-            "smtp_password": "",
-        }
+        self.config = Config.get_conf(self, identifier=9876543210, force_registration=True)
+        default_global = {"blacklist": [], "verified_role_id": None}
+        default_user = {"email": None, "verified": False}
         self.config.register_global(**default_global)
+        self.config.register_user(**default_user)
+        self.db_path = "emailverify.sqlite3"
         self.bot.loop.create_task(self.initialize_db())
 
     async def initialize_db(self):
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS verifications (
                     user_id INTEGER PRIMARY KEY,
-                    email TEXT,
-                    code TEXT,
+                    email TEXT NOT NULL,
+                    code TEXT NOT NULL,
                     verified INTEGER DEFAULT 0
                 )
             """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS blacklist (
-                    entry TEXT PRIMARY KEY
-                )
-            """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """)
             await db.commit()
 
-    @commands.command()
-    async def verifybutton(self, ctx):
-        """Send the verify button."""
-        button = Button(label="Verify Email", style=discord.ButtonStyle.green)
+    @red_commands.command()
+    @red_commands.admin()
+    async def setverifiedrole(self, ctx, role: discord.Role):
+        await self.config.verified_role_id.set(role.id)
+        await ctx.send(f"✅ Verified role set to: {role.name}")
 
-        async def button_callback(interaction: discord.Interaction):
-            try:
-                async with aiosqlite.connect(DB_PATH) as db:
-                    async with db.execute("SELECT 1 FROM blacklist WHERE entry = ? OR entry = ?", 
-                                          (str(interaction.user.id), interaction.user.name)) as cur:
-                        if await cur.fetchone():
-                            await interaction.response.send_message("❌ You are blacklisted from verification.", ephemeral=True)
-                            return
+    @red_commands.command()
+    @red_commands.admin()
+    async def blacklistemail(self, ctx, email: str):
+        bl = await self.config.blacklist()
+        if email not in bl:
+            bl.append(email)
+            await self.config.blacklist.set(bl)
+            await ctx.send(f"🚫 Blacklisted `{email}`")
 
-                class EmailModal(Modal, title="Enter your Email"):
-                    email = TextInput(label="Email", placeholder="you@example.com", required=True)
+    @red_commands.command()
+    @red_commands.admin()
+    async def viewpending(self, ctx):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT user_id, email FROM verifications WHERE verified = 0") as cursor:
+                rows = await cursor.fetchall()
+        if not rows:
+            await ctx.send("✅ No pending verifications.")
+            return
+        msg = "\n".join([f"<@{uid}>: {email}" for uid, email in rows])
+        await ctx.send(f"**Pending Verifications:**\n{msg}")
 
-                    async def on_submit(modal_self, interaction: discord.Interaction):
-                        code = str(random.randint(100000, 999999))
-                        email = modal_self.email.value.strip()
-
-                        async with aiosqlite.connect(DB_PATH) as db:
-                            await db.execute(
-                                "INSERT OR REPLACE INTO verifications (user_id, email, code, verified) VALUES (?, ?, ?, 0)",
-                                (interaction.user.id, email, code)
-                            )
-                            await db.commit()
-                            
-                        await interaction.response.defer(ephemeral=True, thinking=True)
-                        await self.send_email(interaction, email, code)
-
-                        class CodeModal(Modal, title="Enter Verification Code"):
-                            code_input = TextInput(label="Code", placeholder="123456", required=True)
-
-                            async def on_submit(code_modal_self, interaction: discord.Interaction):
-                                async with aiosqlite.connect(DB_PATH) as db:
-                                    async with db.execute("SELECT code FROM verifications WHERE user_id = ?", 
-                                                          (interaction.user.id,)) as cur:
-                                        row = await cur.fetchone()
-
-                                    if not row or code_modal_self.code_input.value != row[0]:
-                                        await interaction.response.send_message("❌ Invalid code.", ephemeral=True)
-                                        return
-
-                                    await db.execute("UPDATE verifications SET verified = 1 WHERE user_id = ?", 
-                                                     (interaction.user.id,))
-                                    await db.commit()
-
-                                    async with db.execute("SELECT value FROM settings WHERE key = 'verified_role'") as cur:
-                                        role_row = await cur.fetchone()
-                                        if not role_row:
-                                            await interaction.response.send_message("⚠️ No verified role set by admin.", ephemeral=True)
-                                            return
-                                        role_id = int(role_row[0])
-                                        role = interaction.guild.get_role(role_id)
-                                        if role:
-                                            await interaction.user.add_roles(role)
-
-                                await interaction.response.send_message("✅ You are verified!", ephemeral=True)
-
-                        try:
-                            await interaction.followup.send_modal(CodeModal())
-                        except Exception as e:
-                            await interaction.followup.send(f"❌ Failed to show code input: `{e}`", ephemeral=True)
-
-                await interaction.response.send_modal(EmailModal())
-
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                try:
-                    await interaction.response.send_message(f"❌ Something went wrong: `{e}`", ephemeral=True)
-                except:
-                    await interaction.followup.send(f"❌ Something went wrong: `{e}`", ephemeral=True)
-
-        button.callback = button_callback
-        view = View()
-        view.add_item(button)
-
+    @red_commands.command()
+    async def verifysetup(self, ctx):
         embed = discord.Embed(
             title="Email Verification",
             description="Click the button below to start the verification process!",
-            color=discord.Color.teal()
+            color=discord.Color.cyan()
         )
+        await ctx.send(embed=embed, view=VerifyView(self))
 
-        await ctx.send(embed=embed, view=view)
+    async def send_verification_email(self, email, code):
+        msg = EmailMessage()
+        msg.set_content(f"Your verification code is: {code}")
+        msg["Subject"] = "Your Verification Code"
+        msg["From"] = "yourbot@yourdomain.com"
+        msg["To"] = email
 
-    @commands.group()
-    @commands.has_permissions(administrator=True)
-    async def verifyadmin(self, ctx):
-        """Admin commands for email verification."""
-        pass
-
-    @verifyadmin.command()
-    async def setrole(self, ctx, role: discord.Role):
-        """Set the global verified role."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('verified_role', ?)", 
-                             (str(role.id),))
-            await db.commit()
-        await ctx.send(f"✅ Verified role set to: {role.name}")
-
-    @verifyadmin.command()
-    async def setemailconfig(self, ctx, smtp_server: str, email: str, password: str):
-        """Set SMTP credentials for email sending."""
-        await self.config.smtp_server.set(smtp_server)
-        await self.config.smtp_email.set(email)
-        await self.config.smtp_password.set(password)
-        await ctx.send("✅ SMTP configuration set.")
-
-    @verifyadmin.command()
-    async def view(self, ctx):
-        """View all verification entries."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT user_id, email, verified FROM verifications") as cur:
-                rows = await cur.fetchall()
-                if not rows:
-                    await ctx.send("No verification entries.")
-                    return
-                msg = "\n".join([f"<@{uid}> - {email} - {'✅' if v else '❌'}" for uid, email, v in rows])
-                await ctx.send(f"**Verification Entries:**\n{msg}")
-
-    @verifyadmin.command()
-    async def remove(self, ctx, user: discord.User):
-        """Remove a user's verification entry."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM verifications WHERE user_id = ?", (user.id,))
-            await db.commit()
-        await ctx.send(f"✅ Removed verification for {user.mention}.")
-
-    @verifyadmin.command()
-    async def blacklist(self, ctx, entry: str):
-        """Blacklist a user ID or email."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT OR IGNORE INTO blacklist (entry) VALUES (?)", (entry,))
-            await db.commit()
-        await ctx.send(f"✅ Blacklisted `{entry}`.")
-
-    @verifyadmin.command()
-    async def unblacklist(self, ctx, entry: str):
-        """Unblacklist a user ID or email."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM blacklist WHERE entry = ?", (entry,))
-            await db.commit()
-        await ctx.send(f"✅ Unblacklisted `{entry}`.")
-
-    async def send_email(self, interaction, recipient_email, code):
-        smtp_server = await self.config.smtp_server()
-        sender_email = await self.config.smtp_email()
-        password = await self.config.smtp_password()
-
-        if not smtp_server or not sender_email or not password:
-            await interaction.response.send_message("❌ Email configuration is not set. Please contact an admin.", ephemeral=True)
-            return
-
-        port = 465
-        message = f"Subject: Your Verification Code\n\nYour code is: {code}"
+        smtp_server = "smtp.zoho.com"
+        smtp_port = 587
+        smtp_username = "yourbot@yourdomain.com"
+        smtp_password = "yourpassword"
 
         try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
-                server.login(sender_email, password)
-                server.sendmail(sender_email, recipient_email, message)
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+            server.quit()
+            return True
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            await interaction.response.send_message(f"❌ Failed to send email: `{e}`", ephemeral=True)
+            print(f"Email sending failed: {e}")
+            return False
+
+    async def unverify_user(self, user_id):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM verifications WHERE user_id = ?", (user_id,))
+            await db.commit()
+        await self.config.user_from_id(user_id).verified.set(False)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM verifications WHERE user_id = ?", (member.id,))
-            await db.commit()
+        await self.unverify_user(member.id)
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild, user):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM verifications WHERE user_id = ?", (user.id,))
-            await db.commit()
+        await self.unverify_user(user.id)
 
-async def setup(bot: Red):
+    @commands.Cog.listener()
+    async def on_member_kick(self, member):
+        await self.unverify_user(member.id)
+
+class VerifyView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Verify", style=discord.ButtonStyle.blurple, custom_id="start_verify")
+    async def start_verify(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EmailModal(self.cog))
+
+class EmailModal(discord.ui.Modal, title="Enter your Email"):
+    email = discord.ui.TextInput(label="Email", style=discord.TextStyle.short, required=True)
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        email = self.email.value
+
+        blacklist = await self.cog.config.blacklist()
+        if email in blacklist:
+            await interaction.followup.send("🚫 This email is blacklisted.", ephemeral=True)
+            return
+
+        code = ''.join(random.choices(string.digits, k=6))
+        success = await self.cog.send_verification_email(email, code)
+
+        if success:
+            async with aiosqlite.connect(self.cog.db_path) as db:
+                await db.execute("REPLACE INTO verifications (user_id, email, code, verified) VALUES (?, ?, ?, 0)",
+                                 (interaction.user.id, email, code))
+                await db.commit()
+            await interaction.followup.send_modal(CodeEntryModal(self.cog, interaction.user.id))
+        else:
+            await interaction.followup.send("❌ Something went wrong sending the email. Please try again later.", ephemeral=True)
+
+class CodeEntryModal(discord.ui.Modal, title="Enter Verification Code"):
+    code = discord.ui.TextInput(label="Code", style=discord.TextStyle.short, required=True)
+
+    def __init__(self, cog, user_id):
+        super().__init__()
+        self.cog = cog
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        input_code = self.code.value.strip()
+        async with aiosqlite.connect(self.cog.db_path) as db:
+            async with db.execute("SELECT code FROM verifications WHERE user_id = ?", (self.user_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row[0] == input_code:
+                    await db.execute("UPDATE verifications SET verified = 1 WHERE user_id = ?", (self.user_id,))
+                    await db.commit()
+                    await self.cog.config.user(interaction.user).verified.set(True)
+                    role_id = await self.cog.config.verified_role_id()
+                    if role_id:
+                        role = interaction.guild.get_role(role_id)
+                        if role:
+                            await interaction.user.add_roles(role, reason="Verified")
+                    await interaction.response.send_message("✅ You have been verified!", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Invalid code. Please try again.", ephemeral=True)
+
+async def setup(bot):
     await bot.add_cog(EmailVerify(bot))
