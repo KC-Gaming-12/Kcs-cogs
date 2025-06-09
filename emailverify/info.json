@@ -1,5 +1,5 @@
 {
-  "author": ["KC Gaming 12", "ChatGPT"],
+  "author": ["KC Gaming 12"],
   "description": "Email verification system with mod tools, SQL storage, and verification role assignment.",
   "install_msg": "Thanks for installing the EmailVerify cog! Use `[p]verifybutton` to get started.",
   "name": "EmailVerify",
